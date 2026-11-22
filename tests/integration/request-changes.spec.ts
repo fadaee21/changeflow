@@ -1,0 +1,40 @@
+import type { Server } from 'node:http';
+import { afterEach, beforeEach, expect, it } from 'vitest';
+import { json, startApp, stopApp, token } from './helpers.js';
+let server: Server; let baseUrl: string;
+const valid = { title: 'Export', description: 'CSV output', reason: 'Reporting' };
+beforeEach(async () => ({ server, baseUrl } = await startApp())); afterEach(async () => stopApp(server));
+it('requires a comment, rejects self-review, retains feedback for the owner, and supports resubmission', async () => {
+  const owner = token('owner', ['Requester', 'Reviewer']); const reviewer = token('reviewer', ['Reviewer']);
+  const created = await json(baseUrl, '/change-requests', owner, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(valid) }); const draft = await created.json() as { id: string; version: number };
+  const submitted = await json(baseUrl, `/change-requests/${draft.id}/submit`, owner, { method: 'POST', headers: { 'if-match': String(draft.version) } }); const pending = await submitted.json() as { version: number };
+  expect((await json(baseUrl, `/change-requests/${draft.id}/request-changes`, owner, { method: 'POST', headers: { 'content-type': 'application/json', 'if-match': String(pending.version) }, body: JSON.stringify({ comment: 'Self review' }) })).status).toBe(403);
+  expect((await json(baseUrl, `/change-requests/${draft.id}/request-changes`, reviewer, { method: 'POST', headers: { 'content-type': 'application/json', 'if-match': String(pending.version) }, body: JSON.stringify({ comment: '' }) })).status).toBe(400);
+  const returned = await json(baseUrl, `/change-requests/${draft.id}/request-changes`, reviewer, { method: 'POST', headers: { 'content-type': 'application/json', 'if-match': String(pending.version) }, body: JSON.stringify({ comment: 'Add scope' }) });
+  const returnedBody = await returned.json() as { status: string; version: number };
+  expect(returnedBody.status).toBe('ChangesRequested');
+  const ownerDetail = await json(baseUrl, `/change-requests/${draft.id}`, owner);
+  expect(await ownerDetail.json()).toMatchObject({ reviewDecisions: [{ action: 'CHANGES_REQUESTED', comment: 'Add scope' }] });
+  const edited = await json(baseUrl, `/change-requests/${draft.id}`, owner, { method: 'PUT', headers: { 'content-type': 'application/json', 'if-match': String(returnedBody.version) }, body: JSON.stringify({ ...valid, description: 'CSV output with scope' }) });
+  const editedBody = await edited.json() as { version: number };
+  const resubmitted = await json(baseUrl, `/change-requests/${draft.id}/submit`, owner, { method: 'POST', headers: { 'if-match': String(editedBody.version) } });
+  expect(await resubmitted.json()).toMatchObject({ status: 'PendingReview' });
+});
+
+it('does not expose retained decisions or comments to a Reviewer viewing a resubmitted PendingReview request', async () => {
+  const owner = token('owner', ['Requester']); const reviewer = token('reviewer', ['Reviewer']);
+  const created = await json(baseUrl, '/change-requests', owner, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(valid) });
+  const draft = await created.json() as { id: string; version: number };
+  const submitted = await json(baseUrl, `/change-requests/${draft.id}/submit`, owner, { method: 'POST', headers: { 'if-match': String(draft.version) } });
+  const pending = await submitted.json() as { version: number };
+  const returned = await json(baseUrl, `/change-requests/${draft.id}/request-changes`, reviewer, { method: 'POST', headers: { 'content-type': 'application/json', 'if-match': String(pending.version) }, body: JSON.stringify({ comment: 'Internal reviewer comment' }) });
+  const returnedBody = await returned.json() as { version: number };
+  const edited = await json(baseUrl, `/change-requests/${draft.id}`, owner, { method: 'PUT', headers: { 'content-type': 'application/json', 'if-match': String(returnedBody.version) }, body: JSON.stringify(valid) });
+  const editedBody = await edited.json() as { version: number };
+  await json(baseUrl, `/change-requests/${draft.id}/submit`, owner, { method: 'POST', headers: { 'if-match': String(editedBody.version) } });
+  const reviewerDetail = await json(baseUrl, `/change-requests/${draft.id}`, reviewer);
+  const reviewerBody = await reviewerDetail.json() as Record<string, unknown>;
+  expect(reviewerDetail.status).toBe(200);
+  expect(reviewerBody).not.toHaveProperty('reviewDecisions');
+  expect(JSON.stringify(reviewerBody)).not.toContain('Internal reviewer comment');
+});

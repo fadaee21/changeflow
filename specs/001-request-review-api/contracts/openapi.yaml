@@ -1,0 +1,154 @@
+openapi: 3.0.3
+info:
+  title: ChangeFlow Request Review API
+  version: 1.0.0
+security:
+  - BearerAuth: []
+paths:
+  /change-requests:
+    get:
+      summary: List accessible Change Requests
+      responses:
+        '200': { $ref: '#/components/responses/ChangeRequestList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      summary: Create a Draft Change Request
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateRequest' }
+      responses:
+        '201': { $ref: '#/components/responses/ChangeRequest' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /change-requests/{id}:
+    get:
+      summary: View an accessible Change Request
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { $ref: '#/components/responses/ChangeRequestDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      summary: Edit owned Draft or ChangesRequested Change Request
+      parameters: [ { $ref: '#/components/parameters/Id' }, { $ref: '#/components/parameters/IfMatch' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/EditRequest' } } }
+      responses:
+        '200': { $ref: '#/components/responses/ChangeRequest' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      summary: Permanently delete owned Draft
+      parameters: [ { $ref: '#/components/parameters/Id' }, { $ref: '#/components/parameters/IfMatch' } ]
+      responses:
+        '204': { description: Deleted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /change-requests/{id}/submit:
+    post:
+      summary: Submit owned Draft or resubmit owned ChangesRequested request
+      parameters: [ { $ref: '#/components/parameters/Id' }, { $ref: '#/components/parameters/IfMatch' } ]
+      responses:
+        '200': { $ref: '#/components/responses/ChangeRequest' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /change-requests/{id}/approve:
+    post:
+      summary: Approve an eligible PendingReview request
+      parameters: [ { $ref: '#/components/parameters/Id' }, { $ref: '#/components/parameters/IfMatch' } ]
+      responses:
+        '200': { $ref: '#/components/responses/ChangeRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /change-requests/{id}/request-changes:
+    post:
+      summary: Request changes with a required comment
+      parameters: [ { $ref: '#/components/parameters/Id' }, { $ref: '#/components/parameters/IfMatch' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/RequestChanges' } } }
+      responses:
+        '200': { $ref: '#/components/responses/ChangeRequest' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    Id: { name: id, in: path, required: true, schema: { type: string } }
+    IfMatch: { name: If-Match, in: header, required: true, schema: { type: integer, minimum: 1 } }
+  schemas:
+    CreateRequest:
+      type: object
+      required: [title, description, reason]
+      properties: { title: { type: string }, description: { type: string }, reason: { type: string } }
+    EditRequest:
+      type: object
+      required: [title, description, reason]
+      properties: { title: { type: string }, description: { type: string }, reason: { type: string } }
+    RequestChanges:
+      type: object
+      required: [comment]
+      properties: { comment: { type: string, minLength: 1 } }
+    ChangeRequest:
+      type: object
+      required: [id, title, description, reason, requesterId, status, version]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        description: { type: string }
+        reason: { type: string }
+        requesterId: { type: string }
+        status: { type: string, enum: [Draft, PendingReview, ChangesRequested, Approved] }
+        version: { type: integer, minimum: 1 }
+    ReviewDecision:
+      type: object
+      required: [id, reviewerId, action, createdAt]
+      properties:
+        id: { type: string }
+        reviewerId: { type: string }
+        action: { type: string, enum: [APPROVED, CHANGES_REQUESTED] }
+        comment: { type: string, nullable: true, description: Required for CHANGES_REQUESTED }
+        createdAt: { type: string, format: date-time }
+    ChangeRequestDetail:
+      allOf:
+        - $ref: '#/components/schemas/ChangeRequest'
+        - type: object
+          description: Review decisions are included only when the authenticated viewer owns the request.
+          properties:
+            reviewDecisions:
+              type: array
+              items: { $ref: '#/components/schemas/ReviewDecision' }
+    Error:
+      type: object
+      required: [error]
+      properties: { error: { type: object, properties: { code: { type: string }, message: { type: string }, details: { type: object } } } }
+  responses:
+    ChangeRequest: { description: Change Request, content: { application/json: { schema: { $ref: '#/components/schemas/ChangeRequest' } } } }
+    ChangeRequestDetail: { description: Accessible Change Request; review decisions are present only for its owning Requester, content: { application/json: { schema: { $ref: '#/components/schemas/ChangeRequestDetail' } } } }
+    ChangeRequestList: { description: Accessible Change Requests without retained review decisions; Requesters receive owned requests, Reviewers receive PendingReview requests, and dual-role actors receive the de-duplicated union, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ChangeRequest' } } } } }
+    BadRequest: { description: Invalid input, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Unauthorized: { description: Missing or invalid Bearer token, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Forbidden: { description: Authorization, ownership, or self-review denial, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    NotFound: { description: Generic unavailable Change Request result that does not disclose existence or content, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Conflict: { description: Invalid state or stale version, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
